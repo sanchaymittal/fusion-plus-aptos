@@ -1,0 +1,17 @@
+[package]
+name = "fusion-plus-aptos"
+version = "0.0.0"
+authors = []
+
+[addresses]
+fusion_plus_addr ='_'
+token_addr = '_'
+
+[dev-addresses]
+
+[dependencies.AptosFramework]
+git = "https://github.com/aptos-labs/aptos-framework.git"
+rev = "mainnet"
+subdir = "aptos-framework"
+
+[dev-dependencies]
