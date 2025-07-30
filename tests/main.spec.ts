@@ -3,10 +3,10 @@ import {expect, jest} from '@jest/globals'
 
 import {createServer, CreateServerReturnType} from 'prool'
 import {anvil} from 'prool/instances'
+import sha3 from 'js-sha3'
 
 import Sdk from '@1inch/cross-chain-sdk'
 import {
-    ethers,
     computeAddress,
     ContractFactory,
     JsonRpcProvider,
@@ -594,7 +594,12 @@ describe('Resolving example', () => {
             )
 
             // Generate cryptographically secure secret for hashlock
-            const secret = uint8ArrayToHex(randomBytes(32))
+            const secret_array = randomBytes(32)
+            const secret = uint8ArrayToHex(secret_array)
+
+            const hashLockForAptos = sha3.sha3_256.array(secret_array)
+            console.log('secret', secret)
+            console.log('SHA3-256 Hash (Hex):', hashLockForAptos)
             const order = Sdk.CrossChainOrder.new(
                 new Address(src.escrowFactory),
                 {
@@ -669,18 +674,21 @@ describe('Resolving example', () => {
 
             const srcEscrowEvent = await srcFactory.getSrcDeployEvent(srcDeployBlock)
 
-            // Aptos destination escrow creation
-            console.log('Creating destination escrow on Aptos...')
-            console.log('Order hash:', orderHash)
-            console.log('Order hash type:', typeof orderHash)
-            
-            // Ensure we have a proper 32-byte hex string
-            let properOrderHash = orderHash
-            if (typeof orderHash === 'string' && !orderHash.startsWith('0x')) {
-                properOrderHash = '0x' + orderHash
-            }
-            
-            const aptosEscrowAddress = await aptos.create_dst_escrow(properOrderHash)
+            const dstImmutables = srcEscrowEvent[0]
+                .withComplement(srcEscrowEvent[1])
+                .withTaker(new Address(resolverContract.dstAddress))
+
+            console.log('dstImmutables', dstImmutables)
+
+            console.log(`Aptos`, `Depositing ${dstImmutables.amount} for order ${orderHash}`)
+
+            // console.log('Creating destination escrow on Aptos...')
+            const {escrowAddress: dstEscrowAddress, immutables: withdrawImmutables} = await aptos.create_dst_escrow(
+                dstImmutables,
+                hashLockForAptos
+            )
+
+            console.log(`Aptos escrow created at ${dstEscrowAddress} for order ${orderHash}`)
 
             const ESCROW_SRC_IMPLEMENTATION = await srcFactory.getSourceImpl()
 
@@ -689,11 +697,10 @@ describe('Resolving example', () => {
                 ESCROW_SRC_IMPLEMENTATION
             )
 
-            await increaseTime(11)
-
-            // User claims funds on Aptos
-            console.log('User claiming funds on Aptos...')
-            await aptos.withdraw_dst_escrow(aptosEscrowAddress)
+            await increaseTime(11) // finality lock passed
+            // User shares key after validation of dst escrow deployment
+            console.log(`Aptos`, `Withdrawing funds for user from ${dstEscrowAddress}`)
+            await aptos.withdraw_dst_escrow(dstEscrowAddress, secret, withdrawImmutables, hashLockForAptos)
 
             console.log(`[${srcChainId}]`, `Withdrawing funds for resolver from ${srcEscrowAddress}`)
             const {txHash: resolverWithdrawHash} = await srcChainResolver.send(
@@ -718,144 +725,142 @@ describe('Resolving example', () => {
             console.log(`Aptos balance change: ${resultBalances.aptos.user - initialBalances.aptos.user}`)
         })
 
-        it.skip.each([1, 2])(
-            'should swap Ethereum USDC -> Aptos tokenA. Single fill only (run %d)',
-            async (runNumber) => {
-                console.log('🚀 Starting Ethereum USDC → Aptos tokenA swap test, run:', runNumber)
-                console.log('📍 Environment: Ethereum L1 → Aptos Mainnet')
-                console.log('💰 Amount: 1 USDC → 1 tokenA (test amounts)')
+        it.skip('should swap Aptos token -> Ethereum USDC, single fill only', async () => {
+            const initialBalances = await getMixedBalances(
+                config.chain.source.tokens.USDC.address,
+                config.chain.aptos.tokens.MY_TOKEN.address
+            )
 
-                console.log('📋 STEP 1: Creating cross-chain order...')
-
-                // Generate cryptographically secure secret for hashlock
-                const secretBytes = ethers.toUtf8Bytes('my_secret_password_for_swap_test')
-                const secret = uint8ArrayToHex(secretBytes)
-
-                const order = Sdk.CrossChainOrder.new(
-                    new Address(src.escrowFactory),
-                    {
-                        salt: Sdk.randBigInt(1000n),
-                        maker: new Address(await srcChainUser.getAddress()),
-                        makingAmount: parseUnits('1', 6), // 1 USDC
-                        takingAmount: parseUnits('1', 6), // 1 tokenA
-                        makerAsset: new Address(config.chain.source.tokens.USDC.address),
-                        takerAsset: new Address(config.chain.destination.tokens.USDC.address)
-                    },
-                    {
-                        hashLock: Sdk.HashLock.forSingleFill(secret),
-                        timeLocks: Sdk.TimeLocks.new({
-                            srcWithdrawal: 10n, // 10sec finality lock
-                            srcPublicWithdrawal: 120n, // 2min private withdrawal window
-                            srcCancellation: 121n, // 1sec after public withdrawal
-                            srcPublicCancellation: 122n, // 1sec private cancellation
-                            dstWithdrawal: 10n, // 10sec finality lock
-                            dstPublicWithdrawal: 100n, // 100sec private withdrawal
-                            dstCancellation: 101n // 1sec public withdrawal
-                        }),
-                        srcChainId: Sdk.NetworkEnum.ETHEREUM,
-                        dstChainId: Sdk.NetworkEnum.COINBASE, // TODO: Replace with Aptos network ID
-                        srcSafetyDeposit: parseEther('0.001'), // 0.001 ETH safety deposit
-                        dstSafetyDeposit: parseEther('0.001') // 0.001 ETH safety deposit
-                    },
-                    {
-                        auction: new Sdk.AuctionDetails({
-                            initialRateBump: 0, // No initial price bump
-                            points: [], // No auction points
-                            duration: 120n, // 2 minute auction
-                            startTime: srcTimestamp
-                        }),
-                        whitelist: [
-                            {
-                                address: new Address(src.resolver),
-                                allowFrom: 0n // Allow immediate filling
-                            }
-                        ],
-                        resolvingStartTime: 0n
-                    },
-                    {
-                        nonce: Sdk.randBigInt(UINT_40_MAX),
-                        allowPartialFills: false, // Single fill only
-                        allowMultipleFills: false // No partial fills
-                    }
-                )
-                console.log('✍️ STEP 2: Signing order on Source...')
-                const signature = await srcChainUser.signOrder(srcChainId, order)
-                const orderHash = order.getOrderHash(srcChainId)
-
-                console.log('🎯 STEP 3: Filling order via resolver...')
-                const resolverContract = new Resolver(src.resolver, dst.resolver)
-                console.log(`[${srcChainId}]`, `🔄 Filling order ${orderHash}`)
-
-                const fillAmount = order.makingAmount
-                const {txHash: orderFillHash, blockHash: srcDeployBlock} = await srcChainResolver.send(
-                    resolverContract.deploySrc(
-                        srcChainId,
-                        order,
-                        signature,
-                        Sdk.TakerTraits.default()
-                            .setExtension(order.extension)
-                            .setAmountMode(Sdk.AmountMode.maker)
-                            .setAmountThreshold(order.takingAmount),
-                        fillAmount
-                    )
-                )
-                console.log(
-                    `[${srcChainId}]`,
-                    `✅ Order ${orderHash} filled for ${fillAmount} in tx https://blockscout.com/tx/${orderFillHash}`
-                )
-
-                const srcEscrowEvent = await srcFactory.getSrcDeployEvent(srcDeployBlock)
-
-                /**
-                 * 💸 STEP 4: APTOS DEPOSIT
-                 *
-                 * Continue on Aptos chain:
-                 * 1. Deposit equivalent tokenA amount to escrow
-                 * 2. Create destination escrow with matching parameters
-                 * 3. Prepare for user withdrawal
-                 */
-                console.log('💸 STEP 4: Depositing funds on Aptos...')
-                const dstImmutables = srcEscrowEvent[0]
-                    .withComplement(srcEscrowEvent[1])
-                    .withTaker(new Address(resolverContract.dstAddress))
-
-                console.log(`[${dstChainId}]`, `💰 Depositing ${dstImmutables.amount} for order ${orderHash}`)
-
-                if (runNumber === 1) {
-                    console.log('⏭️ Skipping first run - simulation mode')
-                } else {
-                    console.log('🏦 Funding destination escrow on Aptos...')
-                    await aptos.fund_dst_escrow()
+            // Generate cryptographically secure secret for hashlock
+            const secret = uint8ArrayToHex(randomBytes(32))
+            const order = Sdk.CrossChainOrder.new(
+                new Address(src.escrowFactory),
+                {
+                    salt: Sdk.randBigInt(1000n),
+                    maker: new Address(await srcChainUser.getAddress()),
+                    makingAmount: parseUnits('100', 6),
+                    takingAmount: parseUnits('99', 6),
+                    makerAsset: new Address(config.chain.source.tokens.USDC.address),
+                    takerAsset: new Address(config.chain.destination.tokens.USDC.address) /// TODO: change to Aptos token
+                },
+                {
+                    hashLock: Sdk.HashLock.forSingleFill(secret),
+                    timeLocks: Sdk.TimeLocks.new({
+                        srcWithdrawal: 10n,
+                        srcPublicWithdrawal: 120n,
+                        srcCancellation: 121n,
+                        srcPublicCancellation: 122n,
+                        dstWithdrawal: 10n,
+                        dstPublicWithdrawal: 100n,
+                        dstCancellation: 101n
+                    }),
+                    srcChainId,
+                    dstChainId,
+                    srcSafetyDeposit: parseEther('0.001'),
+                    dstSafetyDeposit: parseEther('0.001')
+                },
+                {
+                    auction: new Sdk.AuctionDetails({
+                        initialRateBump: 0,
+                        points: [],
+                        duration: 120n,
+                        startTime: srcTimestamp
+                    }),
+                    whitelist: [
+                        {
+                            address: new Address(src.resolver),
+                            allowFrom: 0n
+                        }
+                    ],
+                    resolvingStartTime: 0n
+                },
+                {
+                    nonce: Sdk.randBigInt(UINT_40_MAX),
+                    allowPartialFills: false,
+                    allowMultipleFills: false
                 }
+            )
 
-                const ESCROW_SRC_IMPLEMENTATION = await srcFactory.getSourceImpl()
+            /// TODO: implmenet aptos user signOrder
+            const signature = await srcChainUser.signOrder(srcChainId, order)
+            /// TODO: check the getOrderHash implementation at 1inch sdk
+            const orderHash = order.getOrderHash(srcChainId)
 
-                const srcEscrowAddress = new Sdk.EscrowFactory(new Address(src.escrowFactory)).getSrcEscrowAddress(
-                    srcEscrowEvent[0],
-                    ESCROW_SRC_IMPLEMENTATION
+            // Resolver fills order
+            const resolverContract = new Resolver(src.resolver, dst.resolver)
+
+            console.log(`[${srcChainId}]`, `Filling order ${orderHash}`)
+
+            /// TODO: implement resolver create_src_escrow for Aptos Resolver
+            const fillAmount = order.makingAmount
+            const {txHash: orderFillHash, blockHash: srcDeployBlock} = await srcChainResolver.send(
+                resolverContract.deploySrc(
+                    srcChainId,
+                    order,
+                    signature,
+                    Sdk.TakerTraits.default()
+                        .setExtension(order.extension)
+                        .setAmountMode(Sdk.AmountMode.maker)
+                        .setAmountThreshold(order.takingAmount),
+                    fillAmount
                 )
+            )
 
-                console.log('🔓 STEP 6: Completing swap with secret sharing...')
+            console.log(`[${srcChainId}]`, `Order ${orderHash} filled for ${fillAmount} in tx ${orderFillHash}`)
 
-                await increaseTime(20) // Simulate finality lock
+            const srcEscrowEvent = await srcFactory.getSrcDeployEvent(srcDeployBlock)
 
-                if (runNumber === 1) {
-                    console.log('⏭️ Skipping withdrawal - simulation mode')
-                } else {
-                    console.log('🎉 Completing swap...')
-                    await aptos.claim_funds()
+            const dstImmutables = srcEscrowEvent[0]
+                .withComplement(srcEscrowEvent[1])
+                .withTaker(new Address(resolverContract.dstAddress))
 
-                    console.log(`[${srcChainId}]`, `🏦 Withdrawing funds for resolver...`)
-                    const {txHash: resolverWithdrawHash} = await srcChainResolver.send(
-                        resolverContract.withdraw('src', srcEscrowAddress, secret, srcEscrowEvent[0])
-                    )
-                    console.log(
-                        `[${srcChainId}]`,
-                        `✅ Swap completed! Resolver withdrew funds in tx https://blockscout.com/tx/${resolverWithdrawHash}`
-                    )
-                }
-            }
-        )
+            console.log('dstImmutables', dstImmutables)
+
+            console.log(`Aptos`, `Depositing ${dstImmutables.amount} for order ${orderHash}`)
+
+            // console.log('Creating destination escrow on Aptos...')
+            const hashLockForAptos = sha3.sha3_256(secret) // returns hex string
+            const {escrowAddress: dstEscrowAddress, immutables: withdrawImmutables2} = await aptos.create_dst_escrow(
+                dstImmutables,
+                hashLockForAptos
+            )
+
+            console.log(`Aptos escrow created at ${dstEscrowAddress} for order ${orderHash}`)
+
+            const ESCROW_SRC_IMPLEMENTATION = await srcFactory.getSourceImpl()
+
+            const srcEscrowAddress = new Sdk.EscrowFactory(new Address(src.escrowFactory)).getSrcEscrowAddress(
+                srcEscrowEvent[0],
+                ESCROW_SRC_IMPLEMENTATION
+            )
+
+            await increaseTime(11) // finality lock passed
+            // User shares key after validation of dst escrow deployment
+            console.log(`Aptos`, `Withdrawing funds for user from ${dstEscrowAddress}`)
+            await aptos.withdraw_dst_escrow(dstEscrowAddress, secret, withdrawImmutables2)
+
+            console.log(`[${srcChainId}]`, `Withdrawing funds for resolver from ${srcEscrowAddress}`)
+            const {txHash: resolverWithdrawHash} = await srcChainResolver.send(
+                resolverContract.withdraw('src', srcEscrowAddress, secret, srcEscrowEvent[0])
+            )
+            console.log(
+                `[${srcChainId}]`,
+                `Withdrew funds for resolver from ${srcEscrowAddress} to ${src.resolver} in tx ${resolverWithdrawHash}`
+            )
+
+            const resultBalances = await getMixedBalances(
+                config.chain.source.tokens.USDC.address,
+                config.chain.aptos.tokens.MY_TOKEN.address
+            )
+
+            // user transferred funds to resolver on source chain
+            expect(initialBalances.src.user - resultBalances.src.user).toBe(order.makingAmount)
+            expect(resultBalances.src.resolver - initialBalances.src.resolver).toBe(order.makingAmount)
+
+            // Aptos balance validation - user should have more tokens after withdrawal
+            expect(resultBalances.aptos.user >= initialBalances.aptos.user).toBe(true)
+            console.log(`Aptos balance change: ${resultBalances.aptos.user - initialBalances.aptos.user}`)
+        })
     })
 
     describe('Cancel', () => {
