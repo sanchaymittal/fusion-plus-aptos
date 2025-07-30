@@ -56,8 +56,8 @@ export const config = {
             blockNumber: 19991288,
             tokens: {
                 MY_TOKEN: {
-                    address: '0xa0b80x55625547c27ed94dde4184151d8a688d39615ace5d389b7fa4f0dbf887819b7c::my_token::SimpleToken6991c6218b36c1d19d4a2e9eb0ce3606eb48',
-                    donor: '0x55625547c27ed94dde4184151d8a688d39615ace5d389b7fa4f0dbf887819b7c'
+                    address: '0xd3866b6dc1f404fb02135b2e05e43a4aaabb244ec3d7f2f0ce8584367288bbd8::my_token::SimpleToken',
+                    donor: '0xd3866b6dc1f404fb02135b2e05e43a4aaabb244ec3d7f2f0ce8584367288bbd8'
                 }
             }
         },
