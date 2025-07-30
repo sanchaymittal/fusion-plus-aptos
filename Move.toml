@@ -1,11 +1,12 @@
 [package]
-name = "fusion-plus-aptos"
+name = "fusion-plus-aptos-v0"
 version = "0.0.0"
 authors = []
 
 [addresses]
-fusion_plus_addr ='_'
-token_addr = '_'
+crosschain_escrow_factory = '0xb4fbc45cfc95f383d157744e7dd7c67730ef7e8a1d785c5bead8e9017069a603'
+token_addr = '0xb4fbc45cfc95f383d157744e7dd7c67730ef7e8a1d785c5bead8e9017069a603'
+resolver_addr = '0xb4fbc45cfc95f383d157744e7dd7c67730ef7e8a1d785c5bead8e9017069a603'
 
 [dev-addresses]
 
