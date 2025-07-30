@@ -3,13 +3,15 @@
 module resolver_addr::resolver {
     use std::signer;
     use std::vector;
+    use std::option;
     use aptos_framework::coin::{Self, Coin};
     use aptos_framework::aptos_coin::AptosCoin;
     
     use crosschain_escrow_factory::escrow_factory::{Self, SrcEscrowArgs, OrderData};
     use crosschain_escrow_factory::escrow_core::{Self, EscrowImmutables};
     use crosschain_escrow_factory::timelock::{Self, Timelocks};
-    use std::string;
+    use std::string::{Self, String};
+    use aptos_std::type_info;
 
     /// Error codes
     const E_UNAUTHORIZED: u64 = 1;
@@ -33,7 +35,7 @@ module resolver_addr::resolver {
         });
     }
 
-    /// Creates a destination escrow via the factory
+    /// Creates a destination escrow via the factory (new version without token_type parameter)
     public entry fun deploy_dst_escrow<TokenType, FeeTokenType, AccessTokenType>(
         caller: &signer,
         resolver_addr: address,
@@ -44,7 +46,6 @@ module resolver_addr::resolver {
         hashlock: vector<u8>,
         maker: address,
         taker: address,
-        token_type: vector<u8>, // String as bytes
         amount: u64,
         safety_deposit: u64,
         // timelocks components
@@ -81,8 +82,8 @@ module resolver_addr::resolver {
         let timelocks = timelock::with_deployed_at(timelocks, deployed_at);
 
         // Reconstruct immutables
-        // Create token type string safely
-        let token_type_string = string::utf8(token_type);
+        // Derive token type programmatically from the generic type parameter
+        let token_type_string = type_info::type_name<TokenType>();
         
         // Validate order_hash is not empty
         assert!(vector::length(&order_hash) > 0, E_UNAUTHORIZED);
@@ -132,7 +133,7 @@ module resolver_addr::resolver {
     // Note: deploy_src_escrow would need similar treatment but is complex due to SrcEscrowArgs
     // For now, keeping it as a non-entry function that can be called from other contracts
 
-    /// Withdraws from an escrow via escrow_core
+    /// Withdraws from an escrow via escrow_core (new version without token_type parameter)
     public entry fun withdraw<TokenType>(
         caller: &signer,
         escrow_addr: address,
@@ -142,7 +143,6 @@ module resolver_addr::resolver {
         hashlock: vector<u8>,
         maker: address,
         taker: address,
-        token_type: vector<u8>, // String as bytes
         amount: u64,
         safety_deposit: u64,
         // timelocks components
@@ -169,12 +169,14 @@ module resolver_addr::resolver {
         let timelocks = timelock::with_deployed_at(timelocks, deployed_at);
 
         // Reconstruct immutables
+        let token_type_string = type_info::type_name<TokenType>();
+        
         let immutables = escrow_core::new_immutables(
             order_hash,
             hashlock,
             maker,
             taker,
-            string::utf8(token_type),
+            token_type_string,
             amount,
             safety_deposit,
             timelocks
@@ -189,7 +191,7 @@ module resolver_addr::resolver {
         );
     }
 
-    /// Cancels an escrow via escrow_core
+    /// Cancels an escrow via escrow_core (new version without token_type parameter)
     public entry fun cancel<TokenType>(
         caller: &signer,
         escrow_addr: address,
@@ -198,7 +200,6 @@ module resolver_addr::resolver {
         hashlock: vector<u8>,
         maker: address,
         taker: address,
-        token_type: vector<u8>, // String as bytes
         amount: u64,
         safety_deposit: u64,
         // timelocks components
@@ -224,12 +225,14 @@ module resolver_addr::resolver {
         let timelocks = timelock::with_deployed_at(timelocks, deployed_at);
 
         // Reconstruct immutables
+        let token_type_string = type_info::type_name<TokenType>();
+        
         let immutables = escrow_core::new_immutables(
             order_hash,
             hashlock,
             maker,
             taker,
-            string::utf8(token_type),
+            token_type_string,
             amount,
             safety_deposit,
             timelocks

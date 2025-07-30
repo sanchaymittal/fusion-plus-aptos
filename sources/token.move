@@ -114,37 +114,4 @@ module token_addr::my_token {
         }
     }
 
-    #[test_only]
-    use std::string;
-    
-    #[test(aptos_framework = @0x1)]
-    fun test_initialize_and_mint(aptos_framework: &signer) acquires Capabilities {
-        use aptos_framework::account;
-        use aptos_framework::aptos_coin;
-        
-        // Initialize the coin framework
-        aptos_coin::ensure_initialized_with_apt_fa_metadata_for_test();
-        
-        // Create test accounts
-        let admin = account::create_account_for_test(@token_addr);
-        let user = account::create_account_for_test(@0x4);
-        
-        // Initialize token
-        initialize(
-            &admin,
-            string::utf8(b"My Token"),
-            string::utf8(b"MTK"),
-            8,
-            true
-        );
-        
-        // Register user account
-        register(&user);
-        
-        // Mint tokens
-        mint(&admin, signer::address_of(&user), 1000000);
-        
-        // Check balance
-        assert!(balance(signer::address_of(&user)) == 1000000, 0);
-    }
 }

@@ -239,21 +239,34 @@ module crosschain_escrow_factory::escrow_factory {
         let dst_cancellation_time = timelock::get_stage_time(&escrow_core::get_timelocks(&immutables), timelock::stage_dst_cancellation());
         assert!(dst_cancellation_time <= args.src_cancellation_timestamp, error::invalid_argument(E_INVALID_CREATION_TIME));
 
-        // For this implementation, we'll create the escrow address deterministically
-        // and return it. The actual escrow creation would happen through a different flow.
-        let escrow_addr = compute_dst_escrow_address(factory_addr, &immutables);
+        // Calculate how much tokens and deposit to use
+        let tokens_needed = escrow_core::get_amount(&immutables);
+        let deposit_needed = escrow_core::get_safety_deposit_amount(&immutables);
+        
+        // Extract the exact amounts needed for the escrow
+        let escrow_tokens = coin::extract(&mut tokens, tokens_needed);
+        let escrow_deposit = coin::extract(&mut safety_deposit, deposit_needed);
+
+        // Create the actual escrow using escrow_core
+        let escrow_addr = escrow_core::create_escrow<TokenType>(
+            caller,
+            immutables,
+            escrow_tokens,
+            escrow_deposit,
+            false  // is_source = false for destination escrow
+        );
 
         // Emit creation event
         event::emit_event(&mut factory.dst_escrow_events, DstEscrowCreatedEvent {
             escrow_address: escrow_addr,
             hashlock: escrow_core::get_hashlock(&immutables),
-            taker: escrow_core::get_taker(&immutables),
+            taker: escrow_core::get_taker(&immutables),  
             timestamp: timestamp::now_seconds(),
         });
 
         factory.total_dst_escrows = factory.total_dst_escrows + 1;
         
-        // TODO: Actually deposit the coins when escrow creation is implemented
+        // Return any remaining tokens and deposits to the caller
         (escrow_addr, tokens, safety_deposit)
     }
 
