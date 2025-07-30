@@ -4,202 +4,183 @@ import {ethers} from 'ethers'
 
 dotenv.config()
 
-const privateKey = new Ed25519PrivateKey(process.env.PRIVATE_KEY as string)
+const privateKey = new Ed25519PrivateKey(process.env.DEPLOYER_PRIVATE_KEY as string)
 const account = Account.fromPrivateKey({privateKey})
+const accountAddress = account.accountAddress.toString()
+
+const makerPrivateKey = new Ed25519PrivateKey(process.env.MAKER_PRIVATE_KEY as string)
+const makerAccount = Account.fromPrivateKey({privateKey: makerPrivateKey})
+const makerAddress = makerAccount.accountAddress.toString()
 
 // Default to devnet, but allow for overriding
 const APTOS_NETWORK: Network = NetworkToNetworkName[process.env.APTOS_NETWORK ?? Network.DEVNET]
 // const APTOS_NETWORK: Network = NetworkToNetworkName[NODE];
 const config = new AptosConfig({network: APTOS_NETWORK})
 const client = new Aptos(config)
-const profile_addr = '0xbf4897e1461fb38861f8431f68b1332d90dd62e3f0d454470b6fc9278dd8bccc'
+const profile_addr = accountAddress
+const resolver_addr = accountAddress
 const SRC_COIN_TYPE = `${profile_addr}::my_token::SimpleToken`
 const secret = ethers.toUtf8Bytes('my_secret_password_for_swap_test')
 
-async function initialize_token(): Promise<void> {
-    const payload = {
-        function: `${profile_addr}::my_token::initialize`,
-        typeArguments: [],
-        functionArguments: [
-            'Simple Token', // name: String
-            'SIMPLE', // symbol: String
-            8, // decimals: u8
-            true // monitor_supply: bool
-        ]
-    }
+// New functions for the upgraded Move modules
+async function create_dst_escrow(order_hash: string): Promise<string> {
+    console.log('🏦 Creating destination escrow on Aptos...')
 
-    await signAndSubmit(payload)
-}
-
-async function register_token(): Promise<void> {
-    const payload = {
-        function: `${profile_addr}::my_token::register`,
-        typeArguments: [],
-        functionArguments: []
-    }
-
-    await signAndSubmit(payload)
-}
-
-async function mint_token(): Promise<void> {
-    const payload = {
-        function: `${profile_addr}::my_token::mint`,
-        typeArguments: [],
-        functionArguments: [
-            account.accountAddress.toString(), // to: address
-            '1000000000' // amount: u64 (adjust as needed)
-        ]
-    }
-
-    await signAndSubmit(payload)
-}
-
-async function initialize_ledger(): Promise<void> {
-    const payload = {
-        function: `${profile_addr}::fusion_plus::initialize_ledger`,
-        typeArguments: [SRC_COIN_TYPE],
-        functionArguments: []
-    }
-    await signAndSubmit(payload)
-}
-
-async function anounce_order(): Promise<void> {
-    // -------------- user-supplied values --------------------------------
-    const srcAmount = 10_000 // 1 APT if decimals = 6
-    const minDstAmount = 10_000
-    const expiresInSecs = 3_600 // 1 hour
-
-    const stringBytes = ethers.toUtf8Bytes('my_secret_password_for_swap_test')
-    const secretHashHex = hexToUint8Array(ethers.keccak256(stringBytes))
-    // --------------------------------------------------------------------
-
-    // Build the txn payload
-    const payload = {
-        type: 'entry_function_payload',
-        function: `${profile_addr}::fusion_plus::create_order`,
-        // 1) generic type functionArguments
-        typeArguments: [SRC_COIN_TYPE],
-        // 2) the four explicit Move parameters, IN ORDER, all as strings or hex
-        functionArguments: [
-            srcAmount.toString(), // u64
-            minDstAmount.toString(), // u64
-            expiresInSecs.toString(), // u64
-            secretHashHex // vector<u8>  (hex string with 0x-prefix)
-        ]
-    }
-
-    //   console.log("payload", payload);
-
-    await signAndSubmit(payload)
-}
-
-async function fund_dst_escrow(): Promise<void> {
-    // -------------- user-supplied values --------------------------------
     const dst_amount = 10_000
-    // const expiration_duration_secs = Math.floor(Date.now() / 1000) + 3600
-    const secret = ethers.toUtf8Bytes('my_secret_password_for_swap_test')
-    const secret_hash = hexToUint8Array(ethers.keccak256(secret))
 
-    const TimeLocks = {
-        srcWithdrawal: 10, // 10sec finality lock
-        srcPublicWithdrawal: 120, // 2min private withdrawal window
-        srcCancellation: 121, // 1sec after public withdrawal
-        srcPublicCancellation: 122, // 1sec private cancellation
-        dstWithdrawal: 10, // 10sec finality lock
-        dstPublicWithdrawal: 100, // 100sec private withdrawal
-        dstCancellation: 101 // 1sec public withdrawal
+    // Create timelocks configuration
+    const timelocks = {
+        src_withdrawal_delay: 10,
+        src_public_withdrawal_delay: 120,
+        src_cancellation_delay: 121,
+        src_public_cancellation_delay: 122,
+        dst_withdrawal_delay: 10,
+        dst_public_withdrawal_delay: 100,
+        dst_cancellation_delay: 101,
+        deployed_at: Math.floor(Date.now() / 1000)
     }
-    // --------------------------------------------------------------------
 
-    // Build the txn payload
+    // Convert order_hash to proper byte array
+    const order_hash_bytes = hexToUint8Array(order_hash)
+    console.log('Order hash bytes length:', order_hash_bytes.length)
+    console.log('Secret bytes length:', secret.length)
+
     const payload = {
-        function: `${profile_addr}::fusion_plus::fund_dst_escrow`,
-        // 1) generic type functionArguments
-        typeArguments: [SRC_COIN_TYPE],
-        // 2) the four explicit Move parameters, IN ORDER, all as strings or hex
+        function: `${resolver_addr}::resolver::deploy_dst_escrow`,
+        typeArguments: [SRC_COIN_TYPE, '0x1::aptos_coin::AptosCoin', SRC_COIN_TYPE], // TokenType, FeeTokenType, AccessTokenType
         functionArguments: [
-            dst_amount.toString(),
-            secret_hash,
-            TimeLocks.srcWithdrawal,
-            TimeLocks.srcPublicWithdrawal,
-            TimeLocks.srcCancellation,
-            TimeLocks.srcPublicCancellation,
-            TimeLocks.dstWithdrawal,
-            TimeLocks.dstPublicWithdrawal,
-            TimeLocks.dstCancellation
+            resolver_addr, // resolver_addr (where resolver config is stored)
+            dst_amount, // token amount to deposit
+            1000, // safety deposit amount
+            // immutables components
+            Array.from(order_hash_bytes), // order_hash as proper byte array
+            Array.from(secret), // hashlock as byte array
+            account.accountAddress.toString(), // maker
+            account.accountAddress.toString(), // taker
+            Array.from(new TextEncoder().encode(SRC_COIN_TYPE)), // token_type as bytes
+            dst_amount, // amount
+            1000, // safety_deposit
+            // timelocks components
+            timelocks.src_withdrawal_delay,
+            timelocks.src_public_withdrawal_delay,
+            timelocks.src_cancellation_delay,
+            timelocks.src_public_cancellation_delay,
+            timelocks.dst_withdrawal_delay,
+            timelocks.dst_public_withdrawal_delay,
+            timelocks.dst_cancellation_delay,
+            timelocks.deployed_at,
+            Math.floor(Date.now() / 1000) + 3600 // src_cancellation_timestamp as number, not string
         ]
     }
 
-    // const payload = {
-    //     function: '0xbf4897e1461fb38861f8431f68b1332d90dd62e3f0d454470b6fc9278dd8bccc::fusion_plus::fund_dst_escrow',
-    //     typeArguments: [
-    //         // Note: typeArguments instead of typeArguments
-    //         '0xbf4897e1461fb38861f8431f68b1332d90dd62e3f0d454470b6fc9278dd8bccc::my_token::SimpleToken'
-    //     ],
-    //     functionArguments: [
-    //         // Note: functionArguments instead of functionArguments
-    //         '10000',
-    //         [
-    //             131, 21, 222, 58, 86, 31, 52, 71, 190, 13, 165, 188, 231, 193, 58, 91, 42, 5, 143, 177, 50, 158, 176,
-    //             53, 59, 95, 66, 146, 195, 218, 68, 233
-    //         ], // Convert to regular array
-    //         10,
-    //         120,
-    //         121,
-    //         122,
-    //         10,
-    //         100,
-    //         101
-    //     ]
-    // }
+    const txnResponse = await signAndSubmitWithResult(payload)
 
-    console.log('payload', payload)
+    // Extract escrow address from events
+    const escrowAddress = extractEscrowAddressFromEvents(txnResponse)
+    console.log('✅ Destination escrow created at address:', escrowAddress)
 
-    await signAndSubmit(payload)
+    return escrowAddress
 }
 
-async function claim_funds(): Promise<void> {
-    // -------------- user-supplied values --------------------------------
-    const order_id = 1
-    //   const secretVec8 = hexToUint8Array(ethers.keccak256(secret));
-    // --------------------------------------------------------------------
+async function withdraw_dst_escrow(escrowAddress: string): Promise<void> {
+    console.log('💰 Withdrawing from destination escrow at:', escrowAddress)
 
-    // Build the txn payload
     const payload = {
-        type: 'entry_function_payload',
-        function: `${profile_addr}::fusion_plus::claim_funds`,
-        // 1) generic type functionArguments
+        function: `${profile_addr}::escrow_core::withdraw`,
         typeArguments: [SRC_COIN_TYPE],
-        // 2) the four explicit Move parameters, IN ORDER, all as strings or hex
-        functionArguments: [order_id.toString(), secret]
+        functionArguments: [
+            escrowAddress, // escrow_address from creation event
+            secret, // secret to unlock hashlock
+            account.accountAddress.toString() // recipient
+        ]
     }
 
-    //   console.log("payload", payload);
-
-    await signAndSubmit(payload)
+    await signAndSubmitWithResult(payload)
+    console.log('✅ Funds withdrawn from destination escrow')
 }
 
-async function cancel_swap(): Promise<void> {
-    // -------------- user-supplied values --------------------------------
-    const order_id = 19
-    // --------------------------------------------------------------------
+async function cancel_dst_escrow(): Promise<void> {
+    console.log('❌ Cancelling destination escrow...')
 
-    // Build the txn payload
     const payload = {
-        type: 'entry_function_payload',
-        function: `${profile_addr}::fusion_plus::cancel_swap`,
-        // 1) generic type functionArguments
+        function: `${profile_addr}::escrow_core::cancel`,
         typeArguments: [SRC_COIN_TYPE],
-        // 2) the four explicit Move parameters, IN ORDER, all as strings or hex
-        functionArguments: [order_id.toString()]
+        functionArguments: [
+            account.accountAddress.toString(), // escrow_address
+            account.accountAddress.toString() // recipient
+        ]
     }
 
-    //   console.log("payload", payload);
-
-    await signAndSubmit(payload)
+    await signAndSubmitWithResult(payload)
+    console.log('✅ Destination escrow cancelled')
 }
 
-async function signAndSubmit(payload: any): Promise<void> {
+async function get_factory_stats(): Promise<void> {
+    console.log('📊 Getting factory statistics...')
+
+    try {
+        // This would be a view function call to get factory stats
+        // For now, just log that we're getting stats
+        console.log('Factory stats retrieved')
+    } catch (error) {
+        console.error('Error getting factory stats:', error)
+    }
+}
+
+async function getTokenBalance(address: string, tokenType: string = SRC_COIN_TYPE): Promise<bigint> {
+    try {
+        const resources = await client.getAccountResources({accountAddress: address})
+
+        // Look for the coin store resource for the specific token type
+        const coinStoreType = `0x1::coin::CoinStore<${tokenType}>`
+        const coinStore = resources.find((resource) => resource.type === coinStoreType)
+
+        if (coinStore && coinStore.data) {
+            const data = coinStore.data as any
+
+            return BigInt(data.coin.value || '0')
+        }
+
+        return BigInt(0)
+    } catch (error) {
+        console.error(`Error getting token balance for ${address}:`, error)
+
+        return BigInt(0)
+    }
+}
+
+async function getAptosBalance(address: string): Promise<bigint> {
+    try {
+        const resources = await client.getAccountResources({accountAddress: address})
+
+        // Look for APT coin store
+        const coinStoreType = '0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>'
+        const coinStore = resources.find((resource) => resource.type === coinStoreType)
+
+        if (coinStore && coinStore.data) {
+            const data = coinStore.data as any
+
+            return BigInt(data.coin.value || '0')
+        }
+
+        return BigInt(0)
+    } catch (error) {
+        console.error(`Error getting APT balance for ${address}:`, error)
+        return BigInt(0)
+    }
+}
+
+async function getAptosBalances(): Promise<{user: bigint; resolver: bigint}> {
+    const userBalance = await getTokenBalance(account.accountAddress.toString())
+    const resolverBalance = await getTokenBalance(account.accountAddress.toString()) // Using same account as placeholder for resolver
+
+    return {
+        user: userBalance,
+        resolver: resolverBalance
+    }
+}
+
+async function signAndSubmitWithResult(payload: any): Promise<any> {
     console.log('payload', payload)
     let transaction
     let senderAuthenticator
@@ -209,6 +190,7 @@ async function signAndSubmit(payload: any): Promise<void> {
         console.log('rawTxn', transaction)
     } catch (e) {
         console.error(e)
+        throw e
     }
 
     try {
@@ -218,6 +200,7 @@ async function signAndSubmit(payload: any): Promise<void> {
         })
     } catch (e) {
         console.error(e)
+        throw e
     }
 
     try {
@@ -228,30 +211,42 @@ async function signAndSubmit(payload: any): Promise<void> {
         console.log('pending', pending)
     } catch (e) {
         console.error(e)
+        throw e
     }
 
     try {
-        await client.waitForTransaction({transactionHash: pending.hash})
+        const txnResult = await client.waitForTransaction({transactionHash: pending.hash})
         console.log('✓ Txn:', `https://explorer.aptoslabs.com/txn/${pending.hash}?network=mainnet`)
+
+        return txnResult
     } catch (e) {
         console.error(e)
+        throw e
     }
 }
 
-;(async (): Promise<void> => {
-    // First time setup for new contract deployment.
-    // console.log('calling initialize_token')
-    // await initialize_token()
-    // console.log('calling initialize_ledger')
-    // await initialize_ledger()
-    // await register_token()
-    // await mint_token()
-    // When needed
-    //   await anounce_order();
-    // await fund_dst_escrow();
-    // await claim_funds()
-    // await cancel_swap()
-})()
+function extractEscrowAddressFromEvents(txnResponse: any): string {
+    try {
+        // Look for DstEscrowCreatedEvent in the transaction events
+        const events = txnResponse.events || []
+
+        for (const event of events) {
+            if (event.type && event.type.includes('DstEscrowCreatedEvent')) {
+                const eventData = event.data
+
+                // eslint-disable-next-line max-depth
+                if (eventData && eventData.escrow_address) {
+                    return eventData.escrow_address
+                }
+            }
+        }
+
+        throw new Error('DstEscrowCreatedEvent not found in transaction events')
+    } catch (error) {
+        console.error('Error extracting escrow address from events:', error)
+        throw error
+    }
+}
 
 function hexToUint8Array(hex: string): Uint8Array {
     if (hex.startsWith('0x')) {
@@ -271,4 +266,27 @@ function hexToUint8Array(hex: string): Uint8Array {
     return byteArray
 }
 
-export {fund_dst_escrow, claim_funds, cancel_swap, anounce_order, initialize_ledger}
+;(async (): Promise<void> => {
+    // First time setup for new contract deployment.
+    // console.log('calling initialize_token')
+    // await initialize_token()
+    // console.log('calling initialize_ledger')
+    // await initialize_ledger()
+    // await register_token()
+    // await mint_token()
+    // When needed
+    //   await anounce_order();
+    // await fund_dst_escrow();
+    // await claim_funds()
+    // await cancel_swap()
+})()
+
+export {
+    create_dst_escrow,
+    withdraw_dst_escrow,
+    cancel_dst_escrow,
+    get_factory_stats,
+    getTokenBalance,
+    getAptosBalance,
+    getAptosBalances
+}
