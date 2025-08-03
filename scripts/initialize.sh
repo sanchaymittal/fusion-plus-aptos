@@ -11,8 +11,8 @@ echo -e "${BLUE}🌟 Fusion+ Aptos Contract Initialization${NC}"
 echo "====================================="
 
 # Configuration
-PACKAGE_ADDRESS="bf4897e1461fb38861f8431f68b1332d90dd62e3f0d454470b6fc9278dd8bccc"
-PROFILE="bob"
+PACKAGE_ADDRESS="0xdef391b1c8951bf801f67a005f9eba70a5aae6d02eba6bb4889a88288ea806a2"
+PROFILE="tokyo"
 
 # Get account address  
 ACCOUNT_ADDRESS=$(aptos config show-profiles --profile="$PROFILE" | grep 'account' | sed -n 's/.*"account": "\(.*\)".*/\1/p')
@@ -41,16 +41,25 @@ run_transaction() {
     echo ""
 }
 
-# Check current status first
-echo -e "${BLUE}📊 Checking current initialization status...${NC}"
-aptos account list --profile "$PROFILE" --query resources | grep -E "(EscrowRegistry|MerkleStorage|FeeBank|EscrowFactory|OrderIntegration|SimpleToken)" | head -10
+# Initialize custom token
+run_transaction "Custom Token" "aptos move run --profile=\"$PROFILE\" --function-id=\"${PACKAGE_ADDRESS}::my_token::initialize\" --args string:'Simple Token' string:'STK' u8:8 bool:true"
+
+# Register for the custom token
+run_transaction "Token Registration" "aptos move run --profile=\"$PROFILE\" --function-id=\"0x1::managed_coin::register\" --type-args=\"${PACKAGE_ADDRESS}::my_token::SimpleToken\""
+
+# Initialize escrow factory
+run_transaction "Escrow Factory" "aptos move run --profile=\"$PROFILE\" --function-id=\"${PACKAGE_ADDRESS}::escrow_factory::initialize\" --type-args \"0x1::aptos_coin::AptosCoin\" \"${PACKAGE_ADDRESS}::my_token::SimpleToken\" --args u64:3600 u64:7200 address:\"${ACCOUNT_ADDRESS}\" address:\"${ACCOUNT_ADDRESS}\""
+
+# Initialize resolver contract
+run_transaction "Resolver Contract" "aptos move run --profile=\"$PROFILE\" --function-id=\"${PACKAGE_ADDRESS}::resolver::initialize\" --args address:\"${PACKAGE_ADDRESS}\""
+
+# Mint some tokens for testing
+run_transaction "Token Minting" "aptos move run --profile=\"$PROFILE\" --function-id=\"${PACKAGE_ADDRESS}::my_token::mint\" --args address:\"${ACCOUNT_ADDRESS}\" u64:1000000000000"
+
+# Check current status
+echo -e "${BLUE}📊 Checking initialization status...${NC}"
+aptos account list --profile "$PROFILE" --query resources | grep -E "(EscrowRegistry|MerkleStorage|FeeBank|EscrowFactory|OrderIntegration|SimpleToken|resolver)" | head -10
 
 echo ""
-echo -e "${BLUE}✅ Based on the resources above, most contracts are already initialized!${NC}"
-echo -e "${GREEN}🎉 Your Fusion+ contracts appear to be ready to use.${NC}"
-
-# Optional: Test a simple view function to verify everything is working
-echo -e "${BLUE}🔍 Testing contract functionality...${NC}"
-
-# You can add specific test calls here if needed
-echo -e "${GREEN}✅ Initialization check complete!${NC}"
+echo -e "${GREEN}✅ Initialization complete!${NC}"
+echo -e "${GREEN}🎉 Your Fusion+ contracts are ready to use.${NC}"

@@ -52,12 +52,12 @@ export const config = {
             createFork: false,
             limitOrderProtocol: '0x111111125421ca6dc452d289314280a0f8842a65',
             wrappedNative: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
-            ownerPrivateKey: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+            ownerPrivateKey: '0x9adeae9682b093f0c662acf93743caaf51520c45d52506b1fd7bf9b93561fad5',
             blockNumber: 19991288,
             tokens: {
                 MY_TOKEN: {
-                    address: '0xd3866b6dc1f404fb02135b2e05e43a4aaabb244ec3d7f2f0ce8584367288bbd8::my_token::SimpleToken',
-                    donor: '0xd3866b6dc1f404fb02135b2e05e43a4aaabb244ec3d7f2f0ce8584367288bbd8'
+                    address: '0xdef391b1c8951bf801f67a005f9eba70a5aae6d02eba6bb4889a88288ea806a2::token::SimpleToken',
+                    donor: '0xdef391b1c8951bf801f67a005f9eba70a5aae6d02eba6bb4889a88288ea806a2'
                 }
             }
         },

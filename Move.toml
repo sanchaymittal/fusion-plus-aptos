@@ -4,9 +4,9 @@ version = "0.0.0"
 authors = []
 
 [addresses]
-crosschain_escrow_factory = "0xd3866b6dc1f404fb02135b2e05e43a4aaabb244ec3d7f2f0ce8584367288bbd8"
-token_addr = "0xd3866b6dc1f404fb02135b2e05e43a4aaabb244ec3d7f2f0ce8584367288bbd8" 
-resolver_addr = "0xd3866b6dc1f404fb02135b2e05e43a4aaabb244ec3d7f2f0ce8584367288bbd8"
+crosschain_escrow_factory = "0xdef391b1c8951bf801f67a005f9eba70a5aae6d02eba6bb4889a88288ea806a2"
+token_addr = "0xdef391b1c8951bf801f67a005f9eba70a5aae6d02eba6bb4889a88288ea806a2" 
+resolver_addr = "0xdef391b1c8951bf801f67a005f9eba70a5aae6d02eba6bb4889a88288ea806a2"
 
 [dev-addresses]
 
