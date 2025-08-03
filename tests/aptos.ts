@@ -4,6 +4,15 @@ import {ethers} from 'ethers'
 
 dotenv.config()
 
+// Transaction tracking for demo purposes
+export const aptosTransactions: Array<{
+    hash: string
+    type: string
+    description: string
+    timestamp: number
+    explorerUrl: string
+}> = []
+
 // Use the friday profile private key
 const privateKey = new Ed25519PrivateKey('0xe28ab8471b770f5f3819e901177b41bec8908e5edd61a2c4b5c5ee1b314d4839')
 const account = Account.fromPrivateKey({privateKey})
@@ -550,7 +559,42 @@ async function signAndSubmitWithResult(payload: any): Promise<any> {
         const txnResult = await client.waitForTransaction({transactionHash: pending.hash})
         const networkName =
             APTOS_NETWORK === Network.MAINNET ? 'mainnet' : APTOS_NETWORK === Network.TESTNET ? 'testnet' : 'devnet'
-        console.log('✓ Txn:', `https://explorer.aptoslabs.com/txn/${pending.hash}?network=${networkName}`)
+        const explorerUrl = `https://explorer.aptoslabs.com/txn/${pending.hash}?network=${networkName}`
+        console.log('✓ Txn:', explorerUrl)
+
+        // Track transaction for final summary
+        const functionName = payload.function || 'unknown'
+        let txType = 'Transaction'
+        let description = `Function: ${functionName}`
+        
+        // Determine transaction type and description based on function
+        if (functionName.includes('deploy_src_escrow')) {
+            txType = 'Source Escrow Creation'
+            description = 'Created source escrow on Aptos for cross-chain swap'
+        } else if (functionName.includes('deploy_dst_escrow')) {
+            txType = 'Destination Escrow Creation'
+            description = 'Created destination escrow on Aptos for token deposit'
+        } else if (functionName.includes('withdraw')) {
+            txType = 'Token Withdrawal'
+            description = 'Withdrew tokens from Aptos escrow'
+        } else if (functionName.includes('cancel')) {
+            txType = 'Escrow Cancellation'
+            description = 'Cancelled Aptos escrow and recovered funds'
+        } else if (functionName.includes('mint')) {
+            txType = 'Token Minting'
+            description = 'Minted custom tokens on Aptos'
+        } else if (functionName.includes('initialize')) {
+            txType = 'Contract Initialization'
+            description = `Initialized ${functionName.includes('token') ? 'token' : functionName.includes('factory') ? 'factory' : 'resolver'} contract`
+        }
+        
+        aptosTransactions.push({
+            hash: pending.hash,
+            type: txType,
+            description,
+            timestamp: Date.now(),
+            explorerUrl
+        })
 
         // Check transaction success status
         if (txnResult.success) {
@@ -791,6 +835,22 @@ async function test_aptos_to_eth_swap(): Promise<any> {
         // console.error('❌ Setup failed:', error)
     }
 })()
+
+// Function to get all Aptos transactions for final summary
+export function getAptosTransactionSummary(): Array<{
+    hash: string
+    type: string
+    description: string
+    timestamp: number
+    explorerUrl: string
+}> {
+    return aptosTransactions
+}
+
+// Function to clear transaction history (for testing)
+export function clearAptosTransactions(): void {
+    aptosTransactions.length = 0
+}
 
 export {
     create_dst_escrow,

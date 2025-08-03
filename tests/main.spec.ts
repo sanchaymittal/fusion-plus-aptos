@@ -24,9 +24,137 @@ import {Wallet} from './wallet'
 import {Resolver} from './resolver'
 import {EscrowFactory} from './escrow-factory'
 import * as aptos from './aptos'
+import {getAptosTransactionSummary} from './aptos'
 
 import factoryContract from '../dist/contracts/TestEscrowFactory.sol/TestEscrowFactory.json'
 import resolverContract from '../dist/contracts/Resolver.sol/Resolver.json'
+
+// Transaction collection for final summary
+interface Transaction {
+    chain: string
+    type: string
+    hash: string
+    description: string
+    timestamp: number
+}
+
+const transactionLog: Transaction[] = []
+
+// Beautiful console output utilities
+const colors = {
+    reset: '\x1b[0m',
+    bright: '\x1b[1m',
+    red: '\x1b[31m',
+    green: '\x1b[32m',
+    yellow: '\x1b[33m',
+    blue: '\x1b[34m',
+    magenta: '\x1b[35m',
+    cyan: '\x1b[36m',
+    white: '\x1b[37m'
+}
+
+const log = {
+    header: (title: string) => {
+        const border = '═'.repeat(60)
+        console.log(`\n${colors.cyan}${colors.bright}╔${border}╗${colors.reset}`)
+        console.log(`${colors.cyan}${colors.bright}║${title.padStart(30 + title.length / 2).padEnd(60)}║${colors.reset}`)
+        console.log(`${colors.cyan}${colors.bright}╚${border}╝${colors.reset}\n`)
+    },
+    section: (title: string) => {
+        console.log(`\n${colors.yellow}${colors.bright}🔸 ${title}${colors.reset}`)
+        console.log(`${colors.yellow}${'─'.repeat(50)}${colors.reset}`)
+    },
+    success: (message: string) => {
+        console.log(`${colors.green}${colors.bright}✅ ${message}${colors.reset}`)
+    },
+    info: (message: string) => {
+        console.log(`${colors.blue}ℹ️  ${message}${colors.reset}`)
+    },
+    warning: (message: string) => {
+        console.log(`${colors.yellow}⚠️  ${message}${colors.reset}`)
+    },
+    transaction: (chain: string, type: string, hash: string, description: string) => {
+        const timestamp = Date.now()
+        transactionLog.push({ chain, type, hash, description, timestamp })
+        console.log(`${colors.magenta}🔗 [${chain}] ${type}: ${hash}${colors.reset}`)
+        console.log(`   ${colors.white}${description}${colors.reset}`)
+    },
+    balance: (label: string, before: bigint, after: bigint, decimals: number = 6) => {
+        const beforeFormatted = (Number(before) / Math.pow(10, decimals)).toFixed(2)
+        const afterFormatted = (Number(after) / Math.pow(10, decimals)).toFixed(2)
+        const change = Number(after) - Number(before)
+        const changeFormatted = (change / Math.pow(10, decimals)).toFixed(2)
+        const changeColor = change >= 0 ? colors.green : colors.red
+        const changeSymbol = change >= 0 ? '+' : ''
+        console.log(`   ${colors.white}${label}: ${beforeFormatted} → ${afterFormatted} ${changeColor}(${changeSymbol}${changeFormatted})${colors.reset}`)
+    },
+    summary: () => {
+        log.header('🎉 TRANSACTION SUMMARY 🎉')
+        
+        // Get real Aptos transactions
+        const aptosTransactions = getAptosTransactionSummary()
+        const totalTransactions = transactionLog.length + aptosTransactions.length
+        
+        if (totalTransactions === 0) {
+            console.log(`${colors.yellow}No transactions recorded${colors.reset}`)
+            return
+        }
+        
+        console.log(`${colors.bright}Total Transactions: ${totalTransactions}${colors.reset}\n`)
+        
+        // Combine Ethereum and Aptos transactions
+        const chainGroups = transactionLog.reduce((acc, tx) => {
+            if (!acc[tx.chain]) acc[tx.chain] = []
+            acc[tx.chain].push(tx)
+            return acc
+        }, {} as Record<string, Transaction[]>)
+        
+        // Add real Aptos transactions
+        if (aptosTransactions.length > 0) {
+            chainGroups['Aptos (Real)'] = aptosTransactions.map(tx => ({
+                chain: 'Aptos (Real)',
+                type: tx.type,
+                hash: tx.hash,
+                description: tx.description,
+                timestamp: tx.timestamp
+            }))
+        }
+        
+        Object.entries(chainGroups).forEach(([chain, txs]) => {
+            const isReal = chain.includes('(Real)')
+            const icon = isReal ? '🚀' : '📍'
+            const chainColor = isReal ? colors.green : colors.cyan
+            
+            console.log(`${chainColor}${colors.bright}${icon} ${chain.toUpperCase()} (${txs.length} transactions)${colors.reset}`)
+            txs.forEach((tx, index) => {
+                const timeStr = new Date(tx.timestamp).toLocaleTimeString()
+                console.log(`   ${index + 1}. ${colors.magenta}${tx.type}${colors.reset}: ${tx.hash}`)
+                console.log(`      ${colors.white}${tx.description} (${timeStr})${colors.reset}`)
+                
+                // Add explorer link for real Aptos transactions
+                if (isReal && 'explorerUrl' in (aptosTransactions.find(aptx => aptx.hash === tx.hash) || {})) {
+                    const aptTx = aptosTransactions.find(aptx => aptx.hash === tx.hash)
+                    console.log(`      ${colors.blue}🔗 View on Explorer: ${aptTx!.explorerUrl}${colors.reset}`)
+                }
+            })
+            console.log()
+        })
+        
+        // Show summary statistics
+        const ethereumCount = transactionLog.filter(tx => tx.chain === 'Ethereum').length
+        const aptosCount = aptosTransactions.length
+        
+        console.log(`${colors.bright}Cross-Chain Summary:${colors.reset}`)
+        console.log(`   ${colors.cyan}📍 Ethereum Transactions: ${ethereumCount}${colors.reset}`)
+        console.log(`   ${colors.green}🚀 Aptos Transactions: ${aptosCount}${colors.reset}`)
+        console.log(`   ${colors.yellow}✨ Total Cross-Chain Operations: ${totalTransactions}${colors.reset}\n`)
+        
+        const border = '═'.repeat(60)
+        console.log(`${colors.green}${colors.bright}╔${border}╗${colors.reset}`)
+        console.log(`${colors.green}${colors.bright}║${'🚀 FUSION+ CROSS-CHAIN SWAP DEMO COMPLETE! 🚀'.padStart(30 + 25).padEnd(60)}║${colors.reset}`)
+        console.log(`${colors.green}${colors.bright}╚${border}╝${colors.reset}\n`)
+    }
+}
 
 const {Address} = Sdk
 
@@ -37,6 +165,7 @@ const resolverPk = '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cd
 
 // eslint-disable-next-line max-lines-per-function
 describe('Resolving example', () => {
+    log.header('🚀 FUSION+ CROSS-CHAIN SWAP TESTS 🚀')
     const srcChainId = config.chain.source.chainId
     const dstChainId = config.chain.destination.chainId
 
@@ -144,6 +273,9 @@ describe('Resolving example', () => {
         src.provider.destroy()
         dst.provider.destroy()
         await Promise.all([src.node?.stop(), dst.node?.stop()])
+        
+        // Display beautiful transaction summary
+        log.summary()
     })
 
     // eslint-disable-next-line max-lines-per-function
@@ -154,13 +286,15 @@ describe('Resolving example', () => {
                 config.chain.aptos.tokens.MY_TOKEN.address
             )
 
+            log.section('Step 1: Generate Cryptographic Secret')
+            
             // Generate cryptographically secure secret for hashlock
             const secret_array = randomBytes(32)
             const secret = uint8ArrayToHex(secret_array)
 
             const hashLockForAptos = sha3.sha3_256.array(secret_array)
-            console.log('secret', secret)
-            console.log('SHA3-256 Hash (Hex):', hashLockForAptos)
+            log.info(`Secret: ${secret.substring(0, 20)}...`)
+            log.info(`SHA3-256 Hash: ${hashLockForAptos.slice(0, 8).join('')}...`)
             const order = Sdk.CrossChainOrder.new(
                 new Address(src.escrowFactory),
                 {
@@ -215,7 +349,8 @@ describe('Resolving example', () => {
             // Resolver fills order
             const resolverContract = new Resolver(src.resolver, dst.resolver)
 
-            console.log(`[${srcChainId}]`, `Filling order ${orderHash}`)
+            log.section('Step 2: Create and Fill Cross-Chain Order')
+            log.info(`Creating order with hash: ${orderHash.substring(0, 20)}...`)
 
             const fillAmount = order.makingAmount
             const {txHash: orderFillHash, blockHash: srcDeployBlock} = await srcChainResolver.send(
@@ -231,7 +366,7 @@ describe('Resolving example', () => {
                 )
             )
 
-            console.log(`[${srcChainId}]`, `Order ${orderHash} filled for ${fillAmount} in tx ${orderFillHash}`)
+            log.transaction('Ethereum', 'Order Fill', orderFillHash, `Filled order for ${(Number(fillAmount) / 1e6).toFixed(2)} USDC`)
 
             const srcEscrowEvent = await srcFactory.getSrcDeployEvent(srcDeployBlock)
 
@@ -239,17 +374,23 @@ describe('Resolving example', () => {
                 .withComplement(srcEscrowEvent[1])
                 .withTaker(new Address(resolverContract.dstAddress))
 
-            console.log('dstImmutables', dstImmutables)
-
-            console.log(`Aptos`, `Depositing ${dstImmutables.amount} for order ${orderHash}`)
+            log.section('Step 3: Create Destination Escrow on Aptos')
+            log.info(`Depositing ${(Number(dstImmutables.amount) / 1e6).toFixed(2)} USDC equivalent on Aptos`)
 
             // console.log('Creating destination escrow on Aptos...')
             const {escrowAddress: dstEscrowAddress, immutables: withdrawImmutables} = await aptos.create_dst_escrow(
                 dstImmutables,
                 hashLockForAptos
             )
+            
+            // Log this as a transaction in our system too
+            const aptosTransactions = getAptosTransactionSummary()
+            const latestAptosTx = aptosTransactions[aptosTransactions.length - 1]
+            if (latestAptosTx) {
+                log.transaction('Aptos', latestAptosTx.type, latestAptosTx.hash, latestAptosTx.description)
+            }
 
-            console.log(`Aptos escrow created at ${dstEscrowAddress} for order ${orderHash}`)
+            log.success(`Aptos escrow created at: ${dstEscrowAddress}`)
 
             const ESCROW_SRC_IMPLEMENTATION = await srcFactory.getSourceImpl()
 
@@ -259,46 +400,64 @@ describe('Resolving example', () => {
             )
 
             await increaseTime(11) // finality lock passed
-            // User shares key after validation of dst escrow deployment
-            console.log(`Aptos`, `Withdrawing funds for user from ${dstEscrowAddress}`)
+            
+            log.section('Step 4: Execute Withdrawals')
+            log.info('Finality lock period passed - proceeding with withdrawals')
+            log.info(`User withdrawing tokens from Aptos escrow: ${dstEscrowAddress}`)
             await aptos.withdraw_dst_escrow(dstEscrowAddress, secret, withdrawImmutables, hashLockForAptos)
+            
+            // Log the withdrawal transaction
+            const aptosWithdrawTransactions = getAptosTransactionSummary()
+            const latestAptosWithdrawTx = aptosWithdrawTransactions[aptosWithdrawTransactions.length - 1]
+            if (latestAptosWithdrawTx) {
+                log.transaction('Aptos', latestAptosWithdrawTx.type, latestAptosWithdrawTx.hash, latestAptosWithdrawTx.description)
+            }
 
-            console.log(`[${srcChainId}]`, `Withdrawing funds for resolver from ${srcEscrowAddress}`)
+            log.info(`Resolver withdrawing USDC from Ethereum escrow: ${srcEscrowAddress}`)
             const {txHash: resolverWithdrawHash} = await srcChainResolver.send(
                 resolverContract.withdraw('src', srcEscrowAddress, secret, srcEscrowEvent[0])
             )
-            console.log(
-                `[${srcChainId}]`,
-                `Withdrew funds for resolver from ${srcEscrowAddress} to ${src.resolver} in tx ${resolverWithdrawHash}`
-            )
+            log.transaction('Ethereum', 'Resolver Withdrawal', resolverWithdrawHash, `Resolver withdrew USDC from escrow to ${src.resolver.substring(0, 10)}...`)
 
             const resultBalances = await getMixedBalances(
                 config.chain.source.tokens.USDC.address,
                 config.chain.aptos.tokens.MY_TOKEN.address
             )
 
+            log.section('Step 5: Verify Results')
+            
             // user transferred funds to resolver on source chain
             expect(initialBalances.src.user - resultBalances.src.user).toBe(order.makingAmount)
             expect(resultBalances.src.resolver - initialBalances.src.resolver).toBe(order.makingAmount)
+            
+            log.success('Ethereum USDC balances verified!')
+            log.balance('User USDC', initialBalances.src.user, resultBalances.src.user, 6)
+            log.balance('Resolver USDC', initialBalances.src.resolver, resultBalances.src.resolver, 6)
 
             // Aptos balance validation - user should have more tokens after withdrawal
             expect(resultBalances.aptos.user >= initialBalances.aptos.user).toBe(true)
-            console.log(`Aptos balance change: ${resultBalances.aptos.user - initialBalances.aptos.user}`)
+            log.success('Aptos token balances verified!')
+            log.balance('User Aptos Tokens', initialBalances.aptos.user, resultBalances.aptos.user, 8)
+            
+            log.success('✨ Ethereum → Aptos swap completed successfully! ✨')
         })
         it('should swap Aptos token -> Ethereum USDC, single fill only', async () => {
+            log.header('🔄 APTOS → ETHEREUM SWAP TEST')
             const initialBalances = await getMixedBalances(
                 config.chain.destination.tokens.USDC.address, // Note: destination is now Ethereum USDC
                 config.chain.aptos.tokens.MY_TOKEN.address
             )
 
+            log.section('Step 1: Generate Cryptographic Secret')
+            
             // Generate cryptographically secure secret for hashlock
             const secret_array = randomBytes(32)
             const secret = uint8ArrayToHex(secret_array)
             // Convert hex string to byte array for Aptos
             const hashLockForAptos = sha3.sha3_256.array(secret_array)
 
-            console.log('secret', secret)
-            console.log('Aptos Hash (Bytes):', hashLockForAptos)
+            log.info(`Secret: ${secret.substring(0, 20)}...`)
+            log.info(`Aptos Hash: ${hashLockForAptos.slice(0, 8).join('')}...`)
 
             // Create base order using sdk.CrossChainOrder.new
             const order = Sdk.CrossChainOrder.new(
@@ -349,30 +508,10 @@ describe('Resolving example', () => {
                 }
             )
 
-            console.log('Order created:', order)
-
-            // Try different ways to access the data
-            console.log('Direct properties:', {
-                salt: order.salt,
-                makingAmount: order.makingAmount,
-                takingAmount: order.takingAmount
-            })
-
-            // Check available methods and properties
-            console.log('Order methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(order)))
-            console.log('Available properties:', Object.keys(order))
-
-            // Check for common method patterns
-            if (typeof order.toSrcImmutables === 'function') {
-                console.log('Has toSrcImmutables method')
-            }
-
-            // Try to inspect internal structure
-            for (const key in order) {
-                if (order.hasOwnProperty(key)) {
-                    console.log(`Order.${key}:`, order[key])
-                }
-            }
+            log.section('Step 2: Create Cross-Chain Order')
+            log.info(`Order created with salt: ${order.salt}`)
+            log.info(`Making amount: ${(Number(order.makingAmount) / 1e8).toFixed(2)} Aptos tokens`)
+            log.info(`Taking amount: ${(Number(order.takingAmount) / 1e6).toFixed(2)} USDC`)
 
             // Customize order for Aptos requirements - ensure all values are JSON serializable
             const aptosOrder = {
@@ -397,11 +536,13 @@ describe('Resolving example', () => {
                 safetyDeposit: 1000
             }
 
+            log.section('Step 3: Sign Order and Create Source Escrow')
+            
             // Sign order using Aptos signature scheme
             const signature = await aptos.signOrderAptos(aptosOrder, 1) // Using chainId 1 for Aptos
-            console.log('Aptos order signature:', signature)
+            log.info(`Order signed on Aptos: ${signature.substring(0, 20)}...`)
 
-            console.log(`[Aptos]`, `Creating source escrow for order ${aptosOrder.orderHash}`)
+            log.info(`Creating source escrow for order: ${aptosOrder.orderHash.substring(0, 20)}...`)
 
             // Step 1: Create source escrow on Aptos
             const {escrowAddress: srcEscrowAddress, immutables: srcImmutables} = await aptos.create_src_escrow(
@@ -410,11 +551,18 @@ describe('Resolving example', () => {
                 dstChainId, // Ethereum destination chain ID
                 config.chain.destination.tokens.USDC.address // Ethereum USDC address
             )
+            
+            // Log this as a transaction in our system too
+            const aptosTransactions = getAptosTransactionSummary()
+            const latestAptosTx = aptosTransactions[aptosTransactions.length - 1]
+            if (latestAptosTx) {
+                log.transaction('Aptos', latestAptosTx.type, latestAptosTx.hash, latestAptosTx.description)
+            }
 
-            console.log(`Aptos source escrow created at ${srcEscrowAddress}`)
+            log.success(`Aptos source escrow created at: ${srcEscrowAddress}`)
 
-            // Step 2: Resolver creates destination escrow on Ethereum
-            console.log(`[${dstChainId}]`, `Creating destination escrow for order ${aptosOrder.orderHash}`)
+            log.section('Step 4: Create Destination Escrow on Ethereum')
+            log.info(`Creating Ethereum destination escrow for order: ${aptosOrder.orderHash.substring(0, 20)}...`)
 
             const resolverContract = new Resolver(src.resolver, dst.resolver)
 
@@ -438,10 +586,10 @@ describe('Resolving example', () => {
                 }) // Create same timelocks manually
             }).withDeployedAt(BigInt(Math.floor(Date.now() / 1000)))
 
-            console.log('dstImmutables', dstImmutables)
+            log.info(`Destination escrow will receive ${(Number(order.takingAmount) / 1e6).toFixed(2)} USDC`)
 
             const {txHash: dstDepositHash} = await dstChainResolver.send(resolverContract.deployDst(dstImmutables))
-            console.log(`[${dstChainId}]`, `Created dst escrow in tx ${dstDepositHash}`)
+            log.transaction('Ethereum', 'Escrow Creation', dstDepositHash, `Created destination escrow for USDC transfer`)
 
             // Get the dstEscrowAddress from the transaction receipt logs
             const dstTxReceipt = await dst.provider.getTransactionReceipt(dstDepositHash)
@@ -449,27 +597,20 @@ describe('Resolving example', () => {
             if (!dstTxReceipt) throw new Error('Transaction receipt not found')
 
             // Parse logs to find the DstEscrowCreated event
-            // First, let's debug what events are actually emitted
-            console.log(
-                'Transaction logs:',
-                dstTxReceipt.logs.map((log) => ({
-                    address: log.address,
-                    topics: log.topics,
-                    data: log.data
-                }))
-            )
+            // Debug transaction logs for escrow address extraction
+            log.info('Parsing transaction logs to extract escrow address...')
 
             // Look for DstEscrowCreated event signature: event DstEscrowCreated(address escrow, bytes32 hashlock, Address taker)
             // where Address is uint256 (type Address is uint256 in AddressLib.sol)
             const dstEscrowCreatedSignature = id('DstEscrowCreated(address,bytes32,uint256)')
-            console.log('Expected DstEscrowCreated signature:', dstEscrowCreatedSignature)
+            log.info(`Looking for DstEscrowCreated event: ${dstEscrowCreatedSignature.substring(0, 20)}...`)
 
             const escrowCreatedLog = dstTxReceipt.logs.find((log) => log.topics[0] === dstEscrowCreatedSignature)
 
             if (!escrowCreatedLog) {
-                console.log('Available event signatures:')
+                log.warning('Available event signatures:')
                 dstTxReceipt.logs.forEach((log, i) => {
-                    console.log(`  Log ${i}: ${log.topics[0]}`)
+                    log.warning(`  Log ${i}: ${log.topics[0]}`)
                 })
                 throw new Error('Escrow creation event not found')
             }
@@ -478,7 +619,7 @@ describe('Resolving example', () => {
             // For events with non-indexed parameters, we need to decode the data field
             const dstEscrowAddress: any = '0x' + escrowCreatedLog.data.slice(26, 66) // Extract address from data field
 
-            console.log(`[${dstChainId}]`, `Destination escrow created at ${dstEscrowAddress}`)
+            log.success(`Ethereum escrow created at: ${dstEscrowAddress}`)
 
             await increaseTime(11) // finality lock passed
 
@@ -497,26 +638,33 @@ describe('Resolving example', () => {
             // )
 
             // Step 4: Resolver withdraws Aptos tokens from source escrow
-            console.log(`[Aptos]`, `Resolver withdrawing tokens from ${srcEscrowAddress}`)
-
-            console.log('Withdrawal parameters:', {
-                secret: secret,
-                srcEscrowAddress: srcEscrowAddress,
-                hashLock: hashLockForAptos,
-                taker: srcImmutables.taker.toString(),
-                maker: srcImmutables.maker.toString(),
-                srcImmutables: srcImmutables
-            })
+            log.section('Step 5: Execute Withdrawals')
+            log.info('Finality lock period passed - proceeding with withdrawals')
+            log.info(`Resolver withdrawing Aptos tokens from: ${srcEscrowAddress}`)
+            log.info('Validating withdrawal parameters...')
             await aptos.withdraw_dst_escrow(srcEscrowAddress, secret, srcImmutables, hashLockForAptos)
+            
+            // Log the withdrawal transaction
+            const aptosResolverTransactions = getAptosTransactionSummary()
+            const latestAptosResolverTx = aptosResolverTransactions[aptosResolverTransactions.length - 1]
+            if (latestAptosResolverTx) {
+                log.transaction('Aptos', latestAptosResolverTx.type, latestAptosResolverTx.hash, latestAptosResolverTx.description)
+            }
 
             const resultBalances = await getMixedBalances(
                 config.chain.destination.tokens.USDC.address,
                 config.chain.aptos.tokens.MY_TOKEN.address
             )
 
+            log.section('Step 6: Verify Results')
+            
             // User should have less Aptos tokens (transferred to resolver)
             expect(initialBalances.aptos.user == resultBalances.aptos.user).toBe(true)
-            console.log(`User Aptos token balance change: ${initialBalances.aptos.user - resultBalances.aptos.user}`)
+            
+            log.success('Aptos token balances verified!')
+            log.balance('User Aptos Tokens', initialBalances.aptos.user, resultBalances.aptos.user, 8)
+            
+            log.success('✨ Aptos → Ethereum swap completed successfully! ✨')
         })
     })
 })
@@ -541,7 +689,7 @@ async function initChain(
         provider,
         deployer
     )
-    console.log(`[${cnf.chainId}]`, `Escrow factory contract deployed to`, escrowFactory)
+    log.info(`[${cnf.chainId}] Escrow factory deployed: ${escrowFactory}`)
 
     // deploy Resolver contract
     const resolver = await deploy(
@@ -554,7 +702,7 @@ async function initChain(
         provider,
         deployer
     )
-    console.log(`[${cnf.chainId}]`, `Resolver contract deployed to`, resolver)
+    log.info(`[${cnf.chainId}] Resolver contract deployed: ${resolver}`)
 
     return {node: node, provider, resolver, escrowFactory}
 }
