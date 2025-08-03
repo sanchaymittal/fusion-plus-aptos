@@ -49,16 +49,14 @@ module crosschain_escrow_factory::create2 {
         from_bcs::to_address(hash_bytes)
     }
 
-    /// Computes address for source escrow
+    /// Computes address for source escrow using resource account method
     public fun compute_src_address(factory_address: address, salt: vector<u8>): address {
-        let seed = new_seed(factory_address, salt, IMPLEMENTATION_SRC);
-        compute_address(&seed)
+        create_resource_address(factory_address, salt, IMPLEMENTATION_SRC)
     }
 
-    /// Computes address for destination escrow
+    /// Computes address for destination escrow using resource account method  
     public fun compute_dst_address(factory_address: address, salt: vector<u8>): address {
-        let seed = new_seed(factory_address, salt, IMPLEMENTATION_DST);
-        compute_address(&seed)
+        create_resource_address(factory_address, salt, IMPLEMENTATION_DST)
     }
 
     /// Validates that a computed address matches the expected pattern

@@ -27,6 +27,7 @@ module crosschain_escrow_factory::escrow_factory {
     const E_UNAUTHORIZED_RESOLVER: u64 = 5;
     const E_INVALID_ORDER_HASH: u64 = 6;
     const E_INVALID_CONFIGURATION: u64 = 7;
+    const E_ALREADY_INITIALIZED: u64 = 8;
 
     /// Factory configuration and state
     struct EscrowFactory<phantom FeeTokenType, phantom AccessTokenType> has key {
@@ -109,6 +110,9 @@ module crosschain_escrow_factory::escrow_factory {
     ) {
         let admin_addr = signer::address_of(admin);
         
+        // Ensure the factory hasn't been initialized
+        assert!(!exists<EscrowFactory<FeeTokenType, AccessTokenType>>(admin_addr), error::already_exists(E_ALREADY_INITIALIZED));
+        
         move_to(admin, EscrowFactory<FeeTokenType, AccessTokenType> {
             owner: admin_addr,
             src_rescue_delay,
@@ -124,9 +128,93 @@ module crosschain_escrow_factory::escrow_factory {
 
         // Initialize escrow core for this factory
         escrow_core::initialize(admin);
+        
+        // Register factory for both token types to receive transfers from resolver
+        coin::register<FeeTokenType>(admin);
+        coin::register<AptosCoin>(admin);
     }
 
-    /// Creates a source escrow (called during order fill post-interaction)
+    /// Creates a source escrow with tokens provided directly
+    public fun create_src_escrow_with_tokens<TokenType, FeeTokenType, AccessTokenType>(
+        caller: &signer,
+        factory_addr: address,
+        tokens: Coin<TokenType>,
+        safety_deposit: Coin<AptosCoin>,
+        order: &OrderData,        // Order details
+        taker: address,
+        making_amount: u64,
+        taking_amount: u64,
+        remaining_making_amount: u64,
+        args: SrcEscrowArgs,
+    ): address acquires EscrowFactory {
+        let factory = borrow_global_mut<EscrowFactory<FeeTokenType, AccessTokenType>>(factory_addr);
+        
+        // Validate resolver access and charge fees
+        fee_bank::validate_resolver_access<AccessTokenType>(
+            &args.whitelist,
+            taker,
+            factory.access_token_config_addr,
+            &args.fee_config,
+            factory.fee_bank_owner
+        );
+
+        // Determine hashlock based on whether multiple fills are allowed
+        let hashlock = if (is_multiple_fills_order(&args)) {
+            handle_multiple_fills(&args, &order.hash, making_amount, remaining_making_amount, order.making_amount)
+        } else {
+            args.hashlock_info
+        };
+
+        // Extract safety deposits
+        let src_safety_deposit = ((args.deposits >> 64) as u64);
+        let dst_safety_deposit = ((args.deposits & 0xFFFFFFFFFFFFFFFF) as u64);
+
+        // Create escrow immutables
+        let timelocks = args.timelocks;
+        timelock::set_deployed_at(&mut timelocks, timestamp::now_seconds());
+        
+        let immutables = escrow_core::new_immutables(
+            args.order_hash,
+            hashlock,
+            order.maker,
+            taker,
+            order.maker_asset,
+            making_amount,
+            src_safety_deposit,
+            timelocks,
+        );
+
+        // Use escrow_core to create the escrow with provided tokens
+        let escrow_addr = escrow_core::create_escrow<TokenType>(
+            caller,
+            immutables,
+            tokens,
+            safety_deposit,
+            true  // is_source = true for source escrow
+        );
+
+        // Create destination complement for cross-chain coordination
+        let dst_complement = DstImmutablesComplement {
+            maker: if (order.receiver == @0x0) { order.maker } else { order.receiver },
+            amount: taking_amount,
+            token: args.dst_token,
+            safety_deposit: dst_safety_deposit,
+            chain_id: args.dst_chain_id,
+        };
+
+        // Emit creation event
+        event::emit_event(&mut factory.src_escrow_events, SrcEscrowCreatedEvent {
+            escrow_address: escrow_addr,
+            immutables,
+            dst_complement,
+            timestamp: timestamp::now_seconds(),
+        });
+
+        factory.total_src_escrows = factory.total_src_escrows + 1;
+        escrow_addr
+    }
+
+    /// Creates a source escrow (original version for compatibility)
     public fun create_src_escrow<TokenType, FeeTokenType, AccessTokenType>(
         factory_addr: address,
         order: &OrderData,        // Order details

@@ -12,6 +12,10 @@ module resolver_addr::resolver {
     use crosschain_escrow_factory::timelock::{Self, Timelocks};
     use std::string::{Self, String};
     use aptos_std::type_info;
+    use aptos_framework::timestamp;
+    use crosschain_escrow_factory::dutch_auction;
+    use crosschain_escrow_factory::fee_bank;
+    use crosschain_escrow_factory::merkle_validator;
 
     /// Error codes
     const E_UNAUTHORIZED: u64 = 1;
@@ -130,8 +134,139 @@ module resolver_addr::resolver {
         };
     }
 
-    // Note: deploy_src_escrow would need similar treatment but is complex due to SrcEscrowArgs
-    // For now, keeping it as a non-entry function that can be called from other contracts
+    /// Creates a source escrow via the factory
+    public entry fun deploy_src_escrow<TokenType, FeeTokenType, AccessTokenType>(
+        caller: &signer,
+        resolver_addr: address,
+        // Order data components
+        order_hash: vector<u8>,
+        maker: address,
+        receiver: address,
+        maker_asset: String,
+        taker_asset: String,
+        making_amount: u64,
+        taking_amount: u64,
+        // Escrow args components
+        hashlock_info: vector<u8>,
+        dst_chain_id: u64,
+        dst_token: String,
+        deposits: u128,
+        // Timelocks components
+        src_withdrawal_delay: u32,
+        src_public_withdrawal_delay: u32,
+        src_cancellation_delay: u32,
+        src_public_cancellation_delay: u32,
+        dst_withdrawal_delay: u32,
+        dst_public_withdrawal_delay: u32,
+        dst_cancellation_delay: u32,
+        // Auction config components
+        gas_bump_estimate: u32,
+        gas_price_estimate: u32,
+        start_time: u32,
+        duration: u32,
+        initial_rate_bump: u32,
+        // Taker data components (for Merkle proofs)
+        proof: vector<vector<u8>>,
+        idx: u64,
+        secret_hash: vector<u8>,
+    ) acquires ResolverConfig {
+        let caller_addr = signer::address_of(caller);
+        let config = borrow_global<ResolverConfig>(resolver_addr);
+        
+        // Only owner can call this function
+        assert!(caller_addr == config.owner, E_UNAUTHORIZED);
+
+        // Step 1: Create timelocks first (needed for immutables)
+        let timelocks = timelock::new(
+            src_withdrawal_delay,
+            src_public_withdrawal_delay,
+            src_cancellation_delay,
+            src_public_cancellation_delay,
+            dst_withdrawal_delay,
+            dst_public_withdrawal_delay,
+            dst_cancellation_delay
+        );
+
+        // Step 2: Extract safety deposits and withdraw tokens from caller's account
+        let src_safety_deposit = ((deposits >> 64) as u64);
+        let tokens_for_escrow = coin::withdraw<TokenType>(caller, making_amount);
+        let safety_deposit_coins = coin::withdraw<AptosCoin>(caller, src_safety_deposit);
+
+        // Create order data
+        let order = escrow_factory::new_order_data(
+            order_hash,
+            maker,
+            receiver,
+            maker_asset,
+            taker_asset,
+            making_amount,
+            taking_amount
+        );
+
+        // Use the timelocks created earlier for address computation
+
+        // Create auction config
+        let auction_config = dutch_auction::new_auction_config(
+            gas_bump_estimate,
+            gas_price_estimate,
+            start_time,
+            duration,
+            initial_rate_bump,
+            vector[] // empty points vector for simple case
+        );
+
+        // Create fee config (simple case - no fees)
+        let fee_config = fee_bank::new_fee_config(
+            false, // resolver_fee_enabled
+            0,     // base_resolver_fee
+            0      // fee_rate
+        );
+
+        // Create resolver whitelist (allow this resolver)
+        let whitelisted_resolver = fee_bank::new_whitelisted_resolver(
+            resolver_addr,
+            0 // allowed_from_time
+        );
+        let whitelist = fee_bank::new_resolver_whitelist(
+            0, // allowed_time
+            vector[whitelisted_resolver]
+        );
+
+        // Create taker data
+        let taker_data = merkle_validator::new_taker_data(
+            proof,
+            idx,
+            secret_hash
+        );
+
+        // Create source escrow args
+        let args = escrow_factory::new_src_escrow_args(
+            order_hash,
+            hashlock_info,
+            dst_chain_id,
+            dst_token,
+            deposits,
+            timelocks,
+            auction_config,
+            fee_config,
+            whitelist,
+            taker_data
+        );
+
+        // Create the source escrow with tokens
+        let _escrow_address = escrow_factory::create_src_escrow_with_tokens<TokenType, FeeTokenType, AccessTokenType>(
+            caller,
+            config.factory_address,
+            tokens_for_escrow,
+            safety_deposit_coins,
+            &order,
+            caller_addr, // taker
+            making_amount,
+            taking_amount,
+            making_amount, // remaining_making_amount
+            args
+        );
+    }
 
     /// Withdraws from an escrow via escrow_core (new version without token_type parameter)
     public entry fun withdraw<TokenType>(
